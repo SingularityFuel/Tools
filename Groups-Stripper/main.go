@@ -3,7 +3,9 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log"
 	"os"
+	"path/filepath"
 	"regexp"
 
 	id3v2 "github.com/bogem/id3v2/v2"
@@ -31,11 +33,16 @@ import (
 
 */
 
-// stripGrouping lists files in the current directory, finds those mp3 files
+// stripGrouping lists files in the target directory, finds those mp3 files
 // with "Grouping" metadata column (as seen in iTunes) and clears it. Ignores
 // subfolders. If dry run, merely lists files which would be modified.
-func stripGrouping(dryRun bool) error {
-	entries, err := os.ReadDir(".")
+func stripGrouping(dryRun bool, root string) error {
+	info, err := os.Stat(root)
+	if err != nil || !info.IsDir() {
+		log.Fatalf("%q is not a valid directory", root)
+	}
+
+	entries, err := os.ReadDir(root)
 	if err != nil {
 		return err
 	}
@@ -52,12 +59,13 @@ func stripGrouping(dryRun bool) error {
 			continue // Ignore subfolders
 		}
 		filename := entry.Name()
+		filepath := filepath.Join(root, entry.Name())
 		if !re.MatchString(filename) {
 			continue // Ignore non-mp3 files
 		}
-		tag, err := id3v2.Open(filename, id3v2.Options{Parse: true})
+		tag, err := id3v2.Open(filepath, id3v2.Options{Parse: true})
 		if err != nil {
-			fmt.Printf("Open error on %s:\n", filename)
+			fmt.Printf("Open error on %s:\n", filepath)
 			return err
 		}
 		defer tag.Close()
@@ -68,14 +76,17 @@ func stripGrouping(dryRun bool) error {
 		if len(tag.GetFrames(frameID)) == 0 {
 			continue // No grouping field, no print
 		}
-		fmt.Printf("  %s\n", filename)
-		if !dryRun {
+		if dryRun {
+			fmt.Printf("  %s\n", filename)
+		} else {
+			fmt.Printf("    %s\n", filename)
 			tag.DeleteFrames(frameID)
 			if err := tag.Save(); err != nil {
 				fmt.Printf("Write error on %s:\n", filename)
 				return err // Only possible error on write step
 			}
 		}
+
 	}
 
 	fmt.Print("Done.\n")
@@ -87,7 +98,13 @@ func main() {
 	exec := flag.Bool("exec", false, "actually perform the metadata stripping (default is dry-run)")
 	flag.Parse()
 
-	if err := stripGrouping(!*exec); err != nil {
+	if len(flag.Args()) != 1 {
+		fmt.Fprintf(os.Stderr, "Usage: %s --exec <path>\n", os.Args[0])
+		os.Exit(1)
+	}
+
+	root := flag.Args()[0]
+	if err := stripGrouping(!*exec, root); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
